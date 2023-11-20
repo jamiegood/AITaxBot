@@ -1,42 +1,36 @@
-import { NextRequest, NextResponse } from "next/server";
-import { Message as VercelChatMessage, StreamingTextResponse } from "ai";
-import { MongoDBAtlasVectorSearch } from "langchain/vectorstores/mongodb_atlas";
-import { createClient } from "@supabase/supabase-js";
-import { MongoClient } from "mongodb";
+import { NextRequest, NextResponse } from 'next/server'
+import { Message as VercelChatMessage, StreamingTextResponse } from 'ai'
+import { MongoDBAtlasVectorSearch } from 'langchain/vectorstores/mongodb_atlas'
+import { createClient } from '@supabase/supabase-js'
+import { MongoClient } from 'mongodb'
 
-import { ChatOpenAI } from "langchain/chat_models/openai";
-import { PromptTemplate } from "langchain/prompts";
-import { SupabaseVectorStore } from "langchain/vectorstores/supabase";
-import { Document } from "langchain/document";
-import {
-  RunnableSequence,
-  RunnablePassthrough,
-} from "langchain/schema/runnable";
-import {
-  BytesOutputParser,
-  StringOutputParser,
-} from "langchain/schema/output_parser";
-import { OpenAIEmbeddings } from "langchain/embeddings/openai";
+import { ChatOpenAI } from 'langchain/chat_models/openai'
+import { PromptTemplate } from 'langchain/prompts'
+import { SupabaseVectorStore } from 'langchain/vectorstores/supabase'
+import { Document } from 'langchain/document'
+import { RunnableSequence, RunnablePassthrough } from 'langchain/schema/runnable'
+import { BytesOutputParser, StringOutputParser } from 'langchain/schema/output_parser'
+import { OpenAIEmbeddings } from 'langchain/embeddings/openai'
 
 // export const runtime = "edge";
 
-const combineDocumentsFn = (docs: Document[], separator = "\n\n") => {
-  const serializedDocs = docs.map((doc) => doc.pageContent);
-  return serializedDocs.join(separator);
-};
+const combineDocumentsFn = (docs: Document[], separator = '\n\n') => {
+  const serializedDocs = docs.map((doc) => doc.pageContent)
+  return serializedDocs.join(separator)
+}
 
 const formatVercelMessages = (chatHistory: VercelChatMessage[]) => {
   const formattedDialogueTurns = chatHistory.map((message) => {
-    if (message.role === "user") {
-      return `Human: ${message.content}`;
-    } else if (message.role === "assistant") {
-      return `Assistant: ${message.content}`;
+    if (message.role === 'user') {
+      return `Human: ${message.content}`
+    } else if (message.role === 'assistant') {
+      return `Assistant: ${message.content}`
     } else {
-      return `${message.role}: ${message.content}`;
+      return `${message.role}: ${message.content}`
     }
-  });
-  return formattedDialogueTurns.join("\n");
-};
+  })
+  return formattedDialogueTurns.join('\n')
+}
 
 const CONDENSE_QUESTION_TEMPLATE = `Given the following conversation and a follow up question, rephrase the follow up question to be a standalone question, in its original language.
 
@@ -45,10 +39,8 @@ const CONDENSE_QUESTION_TEMPLATE = `Given the following conversation and a follo
 </chat_history>
 
 Follow Up Input: {question}
-Standalone question:`;
-const condenseQuestionPrompt = PromptTemplate.fromTemplate(
-  CONDENSE_QUESTION_TEMPLATE,
-);
+Standalone question:`
+const condenseQuestionPrompt = PromptTemplate.fromTemplate(CONDENSE_QUESTION_TEMPLATE)
 
 const ANSWER_TEMPLATE = `You are an Accounting and Tax Tutor and must answer all questions like a helpful and effective tutor to your students.
 
@@ -62,8 +54,8 @@ Answer the question based only on the following context and chat history:
 </chat_history>
 
 Question: {question}
-`;
-const answerPrompt = PromptTemplate.fromTemplate(ANSWER_TEMPLATE);
+`
+const answerPrompt = PromptTemplate.fromTemplate(ANSWER_TEMPLATE)
 
 /**
  * This handler initializes and calls a retrieval chain. It composes the chain using
@@ -73,26 +65,25 @@ const answerPrompt = PromptTemplate.fromTemplate(ANSWER_TEMPLATE);
  */
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const messages = body.messages ?? [];
-    const previousMessages = messages.slice(0, -1);
-    const currentMessageContent = messages[messages.length - 1].content;
+    const body = await req.json()
+    const messages = body.messages ?? []
+    const previousMessages = messages.slice(0, -1)
+    const currentMessageContent = messages[messages.length - 1].content
 
     const model = new ChatOpenAI({
-      modelName: "gpt-3.5-turbo",
+      modelName: 'gpt-3.5-turbo',
       temperature: 0.2,
-    });
+    })
 
     // const client = createClient(
     //   process.env.SUPABASE_URL!,
     //   process.env.SUPABASE_PRIVATE_KEY!,
     // );
 
-    const client = new MongoClient(process.env.MONGODB_ATLAS_URI || "");
-    let namespace =
-      "EFChatBot.notes_for_guidance_taxes_consolidation_act_1997_finance_act";
-    const [dbName, collectionName] = namespace.split(".");
-    const collection = client.db(dbName).collection(collectionName);
+    const client = new MongoClient(process.env.MONGODB_ATLAS_URI || '')
+    let namespace = 'EFChatBot.notes_for_guidance_taxes_consolidation_act_1997_finance_act'
+    const [dbName, collectionName] = namespace.split('.')
+    const collection = client.db(dbName).collection(collectionName)
     // const vectorstore = new SupabaseVectorStore(new OpenAIEmbeddings(), {
     //   client,
     //   tableName: "documents",
@@ -100,51 +91,44 @@ export async function POST(req: NextRequest) {
     // });
     const vectorStore = new MongoDBAtlasVectorSearch(new OpenAIEmbeddings(), {
       collection,
-      indexName: "default", // The name of the Atlas search index. Defaults to "default"
-      textKey: "text", // The name of the collection field containing the raw content. Defaults to "text"
-      embeddingKey: "embedding", // The name of the collection field containing the embedded text. Defaults to "embedding"
-    });
+      indexName: 'default', // The name of the Atlas search index. Defaults to "default"
+      textKey: 'text', // The name of the collection field containing the raw content. Defaults to "text"
+      embeddingKey: 'embedding', // The name of the collection field containing the embedded text. Defaults to "embedding"
+    })
     /**
      * We use LangChain Expression Language to compose two chains.
      * To learn more, see the guide here:
      *
      * https://js.langchain.com/docs/guides/expression_language/cookbook
      */
-    const standaloneQuestionChain = RunnableSequence.from([
-      condenseQuestionPrompt,
-      model,
-      new StringOutputParser(),
-    ]);
+    const standaloneQuestionChain = RunnableSequence.from([condenseQuestionPrompt, model, new StringOutputParser()])
 
-    let resolveWithDocuments: (value: Document[]) => void;
+    let resolveWithDocuments: (value: Document[]) => void
     const documentPromise = new Promise<Document[]>((resolve) => {
-      resolveWithDocuments = resolve;
-    });
+      resolveWithDocuments = resolve
+    })
 
     const retriever = vectorStore.asRetriever({
       callbacks: [
         {
           handleRetrieverEnd(documents) {
-            resolveWithDocuments(documents);
+            resolveWithDocuments(documents)
           },
         },
       ],
-    });
+    })
 
-    const retrievalChain = retriever.pipe(combineDocumentsFn);
+    const retrievalChain = retriever.pipe(combineDocumentsFn)
 
     const answerChain = RunnableSequence.from([
       {
-        context: RunnableSequence.from([
-          (input) => input.question,
-          retrievalChain,
-        ]),
+        context: RunnableSequence.from([(input) => input.question, retrievalChain]),
         chat_history: (input) => input.chat_history,
         question: (input) => input.question,
       },
       answerPrompt,
       model,
-    ]);
+    ])
 
     const conversationalRetrievalQAChain = RunnableSequence.from([
       {
@@ -153,32 +137,32 @@ export async function POST(req: NextRequest) {
       },
       answerChain,
       new BytesOutputParser(),
-    ]);
+    ])
 
     const stream = await conversationalRetrievalQAChain.stream({
       question: currentMessageContent,
       chat_history: formatVercelMessages(previousMessages),
-    });
+    })
 
-    const documents = await documentPromise;
+    const documents = await documentPromise
     const serializedSources = Buffer.from(
       JSON.stringify(
         documents.map((doc) => {
           return {
-            pageContent: doc.pageContent.slice(0, 50) + "...",
+            pageContent: doc.pageContent.slice(0, 150) + '...',
             metadata: doc.metadata,
-          };
-        }),
-      ),
-    ).toString("base64");
+          }
+        })
+      )
+    ).toString('base64')
 
     return new StreamingTextResponse(stream, {
       headers: {
-        "x-message-index": (previousMessages.length + 1).toString(),
-        "x-sources": serializedSources,
+        'x-message-index': (previousMessages.length + 1).toString(),
+        'x-sources': serializedSources,
       },
-    });
+    })
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 });
+    return NextResponse.json({ error: e.message }, { status: 500 })
   }
 }
